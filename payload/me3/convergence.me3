@@ -1,0 +1,40 @@
+# The Convergence: Elden Ring - me3 profile (updated 2026-09-03 for Elden Ring 1.17 / eldenring.exe 2.7.0.0)
+# See README-1.17.md in the package root for what changed and why.
+profileVersion = "v1"
+savefile = "ER0000.cnv"
+
+[[supports]]
+game = "eldenring"
+
+[[package]]
+id = "convergence-er"
+path = "./../mod"
+
+# Core gameplay scripting bridge (mod HKS depends on it). Kept required so a
+# load failure produces a clear me3 error instead of silent script breakage.
+[[natives]]
+path = './../mod/dll/Scripts-Data-Exposer-FS.dll'
+
+# QoL / cosmetic DLLs. Pattern-scan based; marked optional so that if a scan
+# fails on a new game build the game still boots without that feature.
+[[natives]]
+path = './../mod/dll/ErdTools.dll'
+optional = true
+
+[[natives]]
+path = './../mod/dll/erdyes.dll'
+optional = true
+
+[[natives]]
+path = './../mod/dll/ertransmogrify.dll'
+optional = true
+
+# Custom boss/area music (Wwise state unlocker). Rebuilt for 1.17 on 2026-09-03 from
+# github.com/ndahn/yonder with re-derived addresses (see ../tools/wwise-1.17/README.md);
+# confirmed in game. Optional so a future game patch cannot block boot through it.
+[[natives]]
+path = './../mod/dll/unlock_wwise_states_er.dll'
+optional = true
+
+# Removed: fxr_ws_reloader.dll and debug.dll (development-only tools, never
+# shipped in the public release).
