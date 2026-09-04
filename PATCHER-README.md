@@ -11,17 +11,23 @@ merge tool.
 
 * The Convergence 3.0.1 or 3.0.1.2 already installed (official download or the official Launcher).
 * Elden Ring on patch 1.17 (`Game\eldenring.exe` file version 2.7.0.0).
-* Python 3.9 or newer. On Windows also `pip install zstandard cryptography`. On Steam Deck / Linux nothing
-  else: the helper script uses the `zstd` and `openssl` tools that are already on the system, so no pip and no
-  packages are needed (the Python modules are used only if they happen to be installed).
+* Windows: nothing else if you use the exe. With the scripts instead: Python 3.9+ and `pip install zstandard cryptography`.
+* Steam Deck / Linux: Python 3, which SteamOS has. No pip, no packages: the helper uses the `zstd` and `openssl` tools
+  that are already on the system.
 
 ## Run
 
-Windows:
+**Windows, no Python (easiest):** download `Convergence-1.17-patcher.exe` from the release page, put it inside your
+`ConvergenceER` folder and double-click it. It finds the game (next to the mod or through Steam, otherwise it asks with a
+folder dialog), does everything listed below, and waits for Enter before closing so you can read the result.
+Windows SmartScreen warns about an unknown publisher the first time: click "More info", then "Run anyway". The exe is
+built by GitHub Actions from this repository's own source and self-tested on the build machine; the build log is public.
+
+**Windows with Python:**
 ```
 python apply_1.17_patch.py "D:\Games\ELDEN RING\ConvergenceER"
 ```
-Steam Deck / Linux (Konsole; nothing to install, no root needed):
+**Steam Deck / Linux** (Konsole; nothing to install, no root needed):
 ```
 bash run_patcher_linux.sh "$HOME/.steam/steam/steamapps/common/ELDEN RING/ConvergenceER"
 ```
