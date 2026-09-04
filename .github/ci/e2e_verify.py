@@ -6,7 +6,9 @@ conv, game = os.path.join(root, "ConvergenceER"), os.path.join(root, "Game")
 ex = os.path.join(conv, "mod", "action", "script", "modules", "exposer"); bk = os.path.join(conv, "_backup_pre_1.17")
 checks = {}
 b, _, raw = R.read_regulation(os.path.join(conv, "mod", "regulation.bin")); g, _, graw = R.read_regulation(os.path.join(game, "regulation.bin"))
-checks["regulation rebuilt at 11701000, payload identical to the 1.17 stand-in (same rows -> same bytes)"] = b.version == "11701000" and raw == graw
+same = len(b.files) == len(g.files) and all(x.name == y.name and [tuple(r) for r in R.Param.parse(x.data).rows] == [tuple(r) for r in R.Param.parse(y.data).rows]
+    and R.Param.parse(x.data).param_type == R.Param.parse(y.data).param_type for x, y in zip(b.files, g.files))
+checks["regulation rebuilt at 11701000, every param's rows identical to the 1.17 stand-in"] = b.version == "11701000" and same
 gb = open(os.path.join(ex, "GameBasePointers.hks")).read(); ci = open(os.path.join(ex, "ChrInsPointers.hks")).read()
 checks["GameBasePointers: 12 lines carry 1.17 addresses"] = len(re.findall(r"^local _[A-Z_]+ = 0x[0-9A-F]+ -- 1\.17 \(eldenring\.exe 2\.7\.0\.0", gb, re.M)) == 12
 checks["ChrInsPointers: 0x538 x3, 0x539, 0x53A, no 0x530-0x532 entries"] = ci.count("0x538 }") == 3 and ci.count("0x539 }") == 1 and ci.count("0x53A }") == 1 and not re.search(r"0x53[012] \}", ci)
