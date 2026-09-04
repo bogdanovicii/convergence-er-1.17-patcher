@@ -16,7 +16,7 @@ Usage:
   regtool.py upgrade   <mod.bin> <vanilla_old.bin> <vanilla_new.bin> <out.bin> [--report report.json]
                        (3-way merge: vanilla_old must be the vanilla regulation the mod was built on)
 
-Requires: python3 >= 3.8 and EITHER the `zstandard` + `cryptography` modules OR the `zstd` + `openssl` command-line tools.
+Requires: python3 >= 3.8 and EITHER the `zstandard` + `cryptography` modules OR the `zstd` + `openssl` command-line tools\n(AES also has a slow built-in fallback, so only zstd is truly required).
 """
 import json
 import os
@@ -34,9 +34,160 @@ except ImportError:  # pragma: no cover
     zstandard = None
 try:
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes  # type: ignore
-except ImportError:  # pragma: no cover
+    CRYPTO_IMPORT_ERROR = None
+except Exception as _e:  # pragma: no cover  (ImportError, or a native-extension load failure e.g. under Wine)
     Cipher = None
+    CRYPTO_IMPORT_ERROR = f"{type(_e).__name__}: {_e}"
 FORCE_CLI = os.environ.get("REGTOOL_FORCE_CLI") == "1"
+FORCE_PYAES = os.environ.get("REGTOOL_FORCE_PYAES") == "1"
+
+
+# --------------------------------------------------------------------------- built-in AES (last resort)
+# Dependency-free AES-256-CBC, used only when neither the cryptography module nor the openssl tool works
+# (e.g. the Windows exe running under Wine/Proton). Table-driven (FIPS-197 T-tables); ~1 MB/s, so a full
+# patch takes about a minute this way instead of a second. Verified against FIPS-197 and the cryptography module.
+
+
+class PyAES:
+    _S = _SI = _TE = _TD = None
+
+    @classmethod
+    def _tables(cls):
+        if cls._S is not None:
+            return
+        rotl8 = lambda v, n: ((v << n) | (v >> (8 - n))) & 0xFF
+        S = [0] * 256
+        p = q = 1
+        while True:  # Rijndael S-box from the GF(2^8) inverse + affine transform
+            p = (p ^ (p << 1) ^ (0x1B if p & 0x80 else 0)) & 0xFF
+            q ^= q << 1; q &= 0xFF; q ^= q << 2; q &= 0xFF; q ^= q << 4; q &= 0xFF
+            if q & 0x80:
+                q ^= 0x09
+            S[p] = (q ^ rotl8(q, 1) ^ rotl8(q, 2) ^ rotl8(q, 3) ^ rotl8(q, 4) ^ 0x63) & 0xFF
+            if p == 1:
+                break
+        S[0] = 0x63
+        SI = [0] * 256
+        for i, v in enumerate(S):
+            SI[v] = i
+        x2 = lambda v: ((v << 1) ^ (0x1B if v & 0x80 else 0)) & 0xFF
+        TE = [[0] * 256 for _ in range(4)]
+        TD = [[0] * 256 for _ in range(4)]
+        for i in range(256):
+            s = S[i]
+            w = (x2(s) << 24) | (s << 16) | (s << 8) | (x2(s) ^ s)
+            for k in range(4):
+                TE[k][i] = ((w >> (8 * k)) | (w << (32 - 8 * k))) & 0xFFFFFFFF
+            si = SI[i]
+            w = (_gmul(si, 14) << 24) | (_gmul(si, 9) << 16) | (_gmul(si, 13) << 8) | _gmul(si, 11)
+            for k in range(4):
+                TD[k][i] = ((w >> (8 * k)) | (w << (32 - 8 * k))) & 0xFFFFFFFF
+        cls._S, cls._SI, cls._TE, cls._TD = S, SI, TE, TD
+
+    def __init__(self, key: bytes):
+        self._tables()
+        S = self._S
+        assert len(key) == 32
+        w = list(struct.unpack(">8I", key))
+        rcon = 1
+        for i in range(8, 60):  # AES-256 key schedule: 14 rounds, 60 words
+            t = w[i - 1]
+            if i % 8 == 0:
+                t = ((t << 8) | (t >> 24)) & 0xFFFFFFFF
+                t = (S[t >> 24] << 24) | (S[(t >> 16) & 255] << 16) | (S[(t >> 8) & 255] << 8) | S[t & 255]
+                t ^= rcon << 24
+                rcon = ((rcon << 1) ^ (0x11B if rcon & 0x80 else 0)) & 0xFF
+            elif i % 8 == 4:
+                t = (S[t >> 24] << 24) | (S[(t >> 16) & 255] << 16) | (S[(t >> 8) & 255] << 8) | S[t & 255]
+            w.append(w[i - 8] ^ t)
+        self.ek = w
+        TD0, TD1, TD2, TD3 = self._TD
+        dk = list(w[56:60])
+        for r in range(1, 14):  # inverse key schedule: InvMixColumns on the middle round keys, reversed order
+            for j in range(4):
+                v = w[4 * (14 - r) + j]
+                dk.append(TD0[S[v >> 24]] ^ TD1[S[(v >> 16) & 255]] ^ TD2[S[(v >> 8) & 255]] ^ TD3[S[v & 255]])
+        dk.extend(w[0:4])
+        self.dk = dk
+
+    def encrypt_block(self, s0, s1, s2, s3):
+        TE0, TE1, TE2, TE3 = self._TE; S = self._S; rk = self.ek
+        s0 ^= rk[0]; s1 ^= rk[1]; s2 ^= rk[2]; s3 ^= rk[3]
+        for r in range(1, 14):
+            k = 4 * r
+            t0 = TE0[s0 >> 24] ^ TE1[(s1 >> 16) & 255] ^ TE2[(s2 >> 8) & 255] ^ TE3[s3 & 255] ^ rk[k]
+            t1 = TE0[s1 >> 24] ^ TE1[(s2 >> 16) & 255] ^ TE2[(s3 >> 8) & 255] ^ TE3[s0 & 255] ^ rk[k + 1]
+            t2 = TE0[s2 >> 24] ^ TE1[(s3 >> 16) & 255] ^ TE2[(s0 >> 8) & 255] ^ TE3[s1 & 255] ^ rk[k + 2]
+            t3 = TE0[s3 >> 24] ^ TE1[(s0 >> 16) & 255] ^ TE2[(s1 >> 8) & 255] ^ TE3[s2 & 255] ^ rk[k + 3]
+            s0, s1, s2, s3 = t0, t1, t2, t3
+        return ((S[s0 >> 24] << 24 | S[(s1 >> 16) & 255] << 16 | S[(s2 >> 8) & 255] << 8 | S[s3 & 255]) ^ rk[56],
+                (S[s1 >> 24] << 24 | S[(s2 >> 16) & 255] << 16 | S[(s3 >> 8) & 255] << 8 | S[s0 & 255]) ^ rk[57],
+                (S[s2 >> 24] << 24 | S[(s3 >> 16) & 255] << 16 | S[(s0 >> 8) & 255] << 8 | S[s1 & 255]) ^ rk[58],
+                (S[s3 >> 24] << 24 | S[(s0 >> 16) & 255] << 16 | S[(s1 >> 8) & 255] << 8 | S[s2 & 255]) ^ rk[59])
+
+    def decrypt_block(self, s0, s1, s2, s3):
+        TD0, TD1, TD2, TD3 = self._TD; SI = self._SI; dk = self.dk
+        s0 ^= dk[0]; s1 ^= dk[1]; s2 ^= dk[2]; s3 ^= dk[3]
+        for r in range(1, 14):
+            k = 4 * r
+            t0 = TD0[s0 >> 24] ^ TD1[(s3 >> 16) & 255] ^ TD2[(s2 >> 8) & 255] ^ TD3[s1 & 255] ^ dk[k]
+            t1 = TD0[s1 >> 24] ^ TD1[(s0 >> 16) & 255] ^ TD2[(s3 >> 8) & 255] ^ TD3[s2 & 255] ^ dk[k + 1]
+            t2 = TD0[s2 >> 24] ^ TD1[(s1 >> 16) & 255] ^ TD2[(s0 >> 8) & 255] ^ TD3[s3 & 255] ^ dk[k + 2]
+            t3 = TD0[s3 >> 24] ^ TD1[(s2 >> 16) & 255] ^ TD2[(s1 >> 8) & 255] ^ TD3[s0 & 255] ^ dk[k + 3]
+            s0, s1, s2, s3 = t0, t1, t2, t3
+        return ((SI[s0 >> 24] << 24 | SI[(s3 >> 16) & 255] << 16 | SI[(s2 >> 8) & 255] << 8 | SI[s1 & 255]) ^ dk[56],
+                (SI[s1 >> 24] << 24 | SI[(s0 >> 16) & 255] << 16 | SI[(s3 >> 8) & 255] << 8 | SI[s2 & 255]) ^ dk[57],
+                (SI[s2 >> 24] << 24 | SI[(s1 >> 16) & 255] << 16 | SI[(s0 >> 8) & 255] << 8 | SI[s3 & 255]) ^ dk[58],
+                (SI[s3 >> 24] << 24 | SI[(s2 >> 16) & 255] << 16 | SI[(s1 >> 8) & 255] << 8 | SI[s0 & 255]) ^ dk[59])
+
+    def cbc_decrypt(self, iv: bytes, body: bytes) -> bytes:
+        assert len(body) % 16 == 0
+        n = len(body) // 16
+        words = struct.unpack(">%dI" % (4 * n), body)
+        p0, p1, p2, p3 = struct.unpack(">4I", iv)
+        out = [0] * (4 * n)
+        dec = self.decrypt_block
+        for i in range(n):
+            c0, c1, c2, c3 = words[4 * i:4 * i + 4]
+            d0, d1, d2, d3 = dec(c0, c1, c2, c3)
+            out[4 * i] = d0 ^ p0; out[4 * i + 1] = d1 ^ p1; out[4 * i + 2] = d2 ^ p2; out[4 * i + 3] = d3 ^ p3
+            p0, p1, p2, p3 = c0, c1, c2, c3
+        return struct.pack(">%dI" % (4 * n), *out)
+
+    def cbc_encrypt(self, iv: bytes, body: bytes) -> bytes:
+        assert len(body) % 16 == 0
+        n = len(body) // 16
+        words = struct.unpack(">%dI" % (4 * n), body)
+        c0, c1, c2, c3 = struct.unpack(">4I", iv)
+        out = [0] * (4 * n)
+        enc = self.encrypt_block
+        for i in range(n):
+            c0, c1, c2, c3 = enc(words[4 * i] ^ c0, words[4 * i + 1] ^ c1, words[4 * i + 2] ^ c2, words[4 * i + 3] ^ c3)
+            out[4 * i] = c0; out[4 * i + 1] = c1; out[4 * i + 2] = c2; out[4 * i + 3] = c3
+        return struct.pack(">%dI" % (4 * n), *out)
+
+
+def _gmul(a: int, b: int) -> int:
+    r = 0
+    while b:
+        if b & 1:
+            r ^= a
+        a = ((a << 1) ^ (0x1B if a & 0x80 else 0)) & 0xFF
+        b >>= 1
+    return r
+
+
+def zstd_backend() -> str:
+    return "python module" if zstandard is not None and not FORCE_CLI else "zstd CLI"
+
+
+def aes_backend() -> str:
+    """Which AES implementation aes_decrypt/aes_encrypt will use."""
+    if Cipher is not None and not FORCE_CLI and not FORCE_PYAES:
+        return "python module"
+    if shutil.which("openssl") and not FORCE_PYAES:
+        return "openssl CLI"
+    return "built-in (slow)"
 
 
 def _need(tool):
@@ -55,23 +206,28 @@ ER_REG_KEY = bytes.fromhex(
 
 def aes_decrypt(data: bytes) -> bytes:
     iv, body = data[:16], data[16:]
-    if Cipher is not None and not FORCE_CLI:
+    backend = aes_backend()
+    if backend == "python module":
         dec = Cipher(algorithms.AES(ER_REG_KEY), modes.CBC(iv)).decryptor()
         return dec.update(body) + dec.finalize()
-    return subprocess.run([_need("openssl"), "enc", "-d", "-aes-256-cbc", "-K", ER_REG_KEY.hex(), "-iv", iv.hex(), "-nopad"],
-                          input=body, capture_output=True, check=True).stdout
+    if backend == "openssl CLI":
+        return subprocess.run([_need("openssl"), "enc", "-d", "-aes-256-cbc", "-K", ER_REG_KEY.hex(), "-iv", iv.hex(), "-nopad"],
+                              input=body, capture_output=True, check=True).stdout
+    return PyAES(ER_REG_KEY).cbc_decrypt(iv, body)
 
 
 def aes_encrypt(plain: bytes) -> bytes:
     iv = os.urandom(16)
     pad = 16 - (len(plain) % 16)
     padded = plain + bytes([pad]) * pad  # PKCS7, as SoulsFormats does
-    if Cipher is not None and not FORCE_CLI:
+    backend = aes_backend()
+    if backend == "python module":
         enc = Cipher(algorithms.AES(ER_REG_KEY), modes.CBC(iv)).encryptor()
         return iv + enc.update(padded) + enc.finalize()
-    out = subprocess.run([_need("openssl"), "enc", "-aes-256-cbc", "-K", ER_REG_KEY.hex(), "-iv", iv.hex(), "-nopad"],
-                         input=padded, capture_output=True, check=True).stdout
-    return iv + out
+    if backend == "openssl CLI":
+        return iv + subprocess.run([_need("openssl"), "enc", "-aes-256-cbc", "-K", ER_REG_KEY.hex(), "-iv", iv.hex(), "-nopad"],
+                                   input=padded, capture_output=True, check=True).stdout
+    return iv + PyAES(ER_REG_KEY).cbc_encrypt(iv, padded)
 
 
 # --------------------------------------------------------------------------- DCX (ZSTD)

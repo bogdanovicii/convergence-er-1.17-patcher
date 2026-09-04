@@ -17,7 +17,7 @@ Usage:
 
 The Game folder is found automatically: next to ConvergenceER, or through your Steam libraries.
 Requires Python 3.9+ and either `pip install zstandard cryptography` or the `zstd` + `openssl` command-line
-tools (SteamOS has both). The Windows exe needs nothing.
+tools (SteamOS has both; AES also has a slow built-in fallback). The Windows exe needs nothing.
 Backups of every replaced file go to <ConvergenceER>/_backup_pre_1.17/
 """
 import os, re, shutil, sys
@@ -151,7 +151,14 @@ def selftest():
     every payload file is present. Used by the Windows exe build on a real Windows machine."""
     import tempfile
     import regtool as R
-    print(f"backends: zstd={'python module' if R.zstandard else 'zstd CLI'}, aes={'python module' if R.Cipher else 'openssl CLI'}")
+    print(f"backends: zstd={R.zstd_backend()}, aes={R.aes_backend()}"
+          + (f"  (cryptography module not loadable here: {R.CRYPTO_IMPORT_ERROR})" if R.CRYPTO_IMPORT_ERROR else ""))
+    import struct   # the built-in AES must always be right, whichever backend this machine ends up using (FIPS-197 C.3)
+    fips = R.PyAES(bytes(range(32))); pt = bytes.fromhex("00112233445566778899aabbccddeeff")
+    ct = struct.pack(">4I", *fips.encrypt_block(*struct.unpack(">4I", pt)))
+    if ct != bytes.fromhex("8ea2b7ca516745bfeafc49904b496089") or struct.pack(">4I", *fips.decrypt_block(*struct.unpack(">4I", ct))) != pt:
+        die("selftest: built-in AES failed the FIPS-197 test vector")
+    print("  built-in AES: FIPS-197 AES-256 test vector OK")
     van = os.path.join(HERE, "tools", "vanilla-regulation-1.16.1-11611000.bin")
     bnd, level, raw = R.read_regulation(van)
     if bnd.version != "11611000": die(f"selftest: unexpected version {bnd.version}")
