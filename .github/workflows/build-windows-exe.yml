@@ -38,21 +38,26 @@ jobs:
       - name: End-to-end run of the exe on Windows (stand-in install built from public data only)
         shell: pwsh
         run: |
-          $e2e = Join-Path $env:RUNNER_TEMP "e2e"
-          python .github/ci/e2e_setup.py "$e2e"
-          $conv = Join-Path $e2e "ELDEN RING\ConvergenceER"
-          Copy-Item dist\Convergence-1.17-patcher.exe $conv
-          Push-Location $conv
-          cmd /c "Convergence-1.17-patcher.exe < nul > run1.txt 2>&1"
-          $rc1 = $LASTEXITCODE
-          cmd /c "Convergence-1.17-patcher.exe < nul > run2.txt 2>&1"
-          $rc2 = $LASTEXITCODE
-          Pop-Location
-          Get-Content (Join-Path $conv run1.txt) | Where-Object { $_ -notmatch '^\s+[a-z_]+\.param' } | Select-Object -Last 12
-          "exit codes: run1=$rc1 run2=$rc2"
-          if ($rc1 -ne 0 -or $rc2 -ne 0) { exit 1 }
-          python .github/ci/e2e_verify.py "$e2e"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($ver in @("11701000", "11711000")) {
+            $label = if ($ver -eq "11701000") { "Elden Ring 1.17" } else { "Elden Ring 1.17.1" }
+            "=============== end-to-end against $label (regulation $ver) ==============="
+            $env:E2E_GAME_VERSION = $ver
+            $e2e = Join-Path $env:RUNNER_TEMP "e2e-$ver"
+            python .github/ci/e2e_setup.py "$e2e"
+            $conv = Join-Path $e2e "ELDEN RING\ConvergenceER"
+            Copy-Item dist\Convergence-1.17-patcher.exe $conv
+            Push-Location $conv
+            cmd /c "Convergence-1.17-patcher.exe < nul > run1.txt 2>&1"
+            $rc1 = $LASTEXITCODE
+            cmd /c "Convergence-1.17-patcher.exe < nul > run2.txt 2>&1"
+            $rc2 = $LASTEXITCODE
+            Pop-Location
+            Get-Content (Join-Path $conv run1.txt) | Where-Object { $_ -notmatch '^\s+[a-z_]+\.param' } | Select-Object -Last 12
+            "exit codes: run1=$rc1 run2=$rc2"
+            if ($rc1 -ne 0 -or $rc2 -ne 0) { exit 1 }
+            python .github/ci/e2e_verify.py "$e2e"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: Convergence-1.17-patcher-exe

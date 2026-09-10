@@ -11,7 +11,7 @@ team releases an official 1.17 version, prefer that.
 
 ## Requirements
 
-* Elden Ring on **patch 1.17** (`Game\eldenring.exe` file version 2.7.0.0). It will not work on 1.16.
+* Elden Ring on **patch 1.17 or 1.17.1** (`Game\eldenring.exe` 2.7.0.0 or 2.7.1.0). It will not work on 1.16.
 * Shadow of the Erdtree is required by the mod itself, as before.
 * Works with the normal Steam install (Steam must be running) and with a game folder that is not registered
   in Steam (set `GAME_EXE` in the launcher). Windows, or Linux / Steam Deck through Proton.
@@ -69,6 +69,9 @@ Unchanged and working as-is on 1.17: Scripts-Data-Exposer-FS, ErdTools, erdyes (
 
 * The mod ships its own text files, so if you own the Tarnished Pack its new item names may show blank.
   Cosmetic only.
+* On Elden Ring 1.17.1 the custom boss/area music is turned off. Its DLL resolves two music functions by
+  hardcoded address and 1.17.1 moved that code, so leaving it on would hook unrelated code. The rest of the
+  mod is unaffected; 1.17.1 changed no parameter data.
 * Not tested with Seamless Co-op (removed from this package).
 
 ## Credits

@@ -8,7 +8,18 @@ checks = {}
 b, _, raw = R.read_regulation(os.path.join(conv, "mod", "regulation.bin")); g, _, graw = R.read_regulation(os.path.join(game, "regulation.bin"))
 same = len(b.files) == len(g.files) and all(x.name == y.name and [tuple(r) for r in R.Param.parse(x.data).rows] == [tuple(r) for r in R.Param.parse(y.data).rows]
     and R.Param.parse(x.data).param_type == R.Param.parse(y.data).param_type for x, y in zip(b.files, g.files))
-checks["regulation rebuilt at 11701000, every param's rows identical to the 1.17 stand-in"] = b.version == "11701000" and same
+GAME_VER = os.environ.get("E2E_GAME_VERSION", "11701000")
+checks[f"regulation rebuilt at {GAME_VER}, every param's rows identical to the stand-in"] = b.version == GAME_VER and same
+prof = open(os.path.join(conv, "me3", "convergence.me3"), encoding="utf-8").read()
+wwise_live = "\n[[natives]]\npath = './../mod/dll/unlock_wwise_states_er.dll'" in prof
+if GAME_VER == "11711000":
+    checks["1.17.1: music DLL commented out of the me3 profile"] = (not wwise_live) and "# DISABLED on Elden Ring 1.17.1" in prof
+    checks["1.17.1: the other four natives left enabled"] = all(
+        f"\n[[natives]]\npath = './../mod/dll/{n}'" in prof for n in
+        ("Scripts-Data-Exposer-FS.dll", "ErdTools.dll", "erdyes.dll", "ertransmogrify.dll"))
+    checks["1.17.1: run 1 said why the music is off"] = "custom boss/area music turned off" in open(os.path.join(conv, "run1.txt"), errors="replace").read()
+else:
+    checks["1.17: music DLL still enabled in the profile"] = wwise_live
 gb = open(os.path.join(ex, "GameBasePointers.hks")).read(); ci = open(os.path.join(ex, "ChrInsPointers.hks")).read()
 checks["GameBasePointers: 12 lines carry 1.17 addresses"] = len(re.findall(r"^local _[A-Z_]+ = 0x[0-9A-F]+ -- 1\.17 \(eldenring\.exe 2\.7\.0\.0", gb, re.M)) == 12
 checks["ChrInsPointers: 0x538 x3, 0x539, 0x53A, no 0x530-0x532 entries"] = ci.count("0x538 }") == 3 and ci.count("0x539 }") == 1 and ci.count("0x53A }") == 1 and not re.search(r"0x53[012] \}", ci)
@@ -21,8 +32,8 @@ checks["backup: original pointer tables (1.16 values)"] = "-- 1.16\n" in open(os
 checks["backup: original me3 folder and version.txt (not overwritten by the 2nd run)"] = os.path.isfile(os.path.join(bk, "me3", "marker.txt")) and not os.path.isfile(os.path.join(bk, "me3", "Windows", "me3.exe")) and os.path.isfile(os.path.join(bk, "version.txt"))
 checks["backup: original DLL"] = open(os.path.join(bk, "mod", "dll", "unlock_wwise_states_er.dll"), "rb").read() == b"old dll"
 r1 = open(os.path.join(conv, "run1.txt"), errors="replace").read(); r2 = open(os.path.join(conv, "run2.txt"), errors="replace").read()
-checks["run 1: found the folder next to the exe, rebuilt, finished with Done"] = "regulation.bin rebuilt for 1.17" in r1 and "Done. Run Start_Convergence.bat" in r1 and "ERROR" not in r1
-checks["run 2: clean no-op"] = "already at 11701000" in r2 and "GameBasePointers.hks already patched" in r2 and "ChrInsPointers.hks already patched" in r2 and "Done." in r2 and "ERROR" not in r2
+checks["run 1: found the folder next to the exe, rebuilt, finished with Done"] = "regulation.bin rebuilt for " in r1 and "Done. Run Start_Convergence.bat" in r1 and "ERROR" not in r1
+checks["run 2: clean no-op"] = f"already at {GAME_VER}" in r2 and "GameBasePointers.hks already patched" in r2 and "ChrInsPointers.hks already patched" in r2 and "Done." in r2 and "ERROR" not in r2
 ok = True
 for k, v in checks.items():
     print(("  PASS  " if v else "  FAIL  ") + k); ok &= bool(v)

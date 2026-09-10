@@ -30,6 +30,14 @@ FLAGS = {a for a in sys.argv[1:] if a.startswith("-")}
 INTERACTIVE = (FROZEN or not ARGS) and not FLAGS   # double-clicked / no arguments: ask when needed, keep the window open at the end
 sys.path.insert(0, os.path.join(HERE, "tools"))
 
+# Game regulation versions this patch supports. 1.17.1 (2026-09-08) changed no param data at all:
+# the 11701000 and 11711000 vanilla regulations are identical row for row (194 params, zero rows
+# added, removed or edited), and 1.17.1 moved no data global, so the merge result and both pointer
+# tables below are correct on either. Only the version stamp differs.
+GAME_VERSIONS = {"11701000": "1.17", "11711000": "1.17.1"}
+ALREADY_PATCHED = set(GAME_VERSIONS)          # a mod regulation at either version is already done
+WWISE_BROKEN_ON = {"11711000"}                # music DLL hardcodes 1.17.0 code addresses (see below)
+
 RVAS = {  # GameBasePointers.hks singletons: 1.16 -> 1.17 (verified against eldenring.exe 2.7.0.0)
     "_GAME_DATA_MAN": (0x3D5DF38, 0x3D61F98), "_CS_NOW_LOADING_HELPER": (0x3D60EC8, 0x3D64F28),
     "_CS_BULLET_MANAGER": (0x3D62748, 0x3D667A8), "_WORLD_CHR_MAN": (0x3D65F88, 0x3D69FF8),
@@ -199,6 +207,26 @@ def selftest():
     print(f"  payload: all {len(PAYLOAD_FILES)} files present")
     print("SELFTEST OK")
 
+def disable_wwise(conv, game_label):
+    """Comment the music DLL out of the me3 profile on a game build whose code it does not fit.
+
+    unlock_wwise_states_er.dll resolves two BGM functions by hardcoded address. Those addresses are
+    correct for 1.17 (eldenring.exe 2.7.0.0). 1.17.1 shifted the code they point at, so on 1.17.1 the
+    DLL would write its hooks into unrelated code. Leaving it enabled risks a crash, so the entry is
+    commented out until the DLL is rebuilt. Everything else in the mod is unaffected.
+    """
+    prof = os.path.join(conv, "me3", "convergence.me3")
+    s = open(prof, encoding="utf-8").read()
+    marker = "[[natives]]\npath = './../mod/dll/unlock_wwise_states_er.dll'\noptional = true\n"
+    if marker not in s:
+        print("  ! could not find the music DLL entry in the me3 profile; disable it by hand on " + game_label)
+        return
+    note = (f"# DISABLED on Elden Ring {game_label}: this DLL's two BGM hook addresses are 1.17.0 ones and\n"
+            f"# 1.17.1 moved that code. Re-enable it only with a build made for {game_label}.\n")
+    s = s.replace(marker, note + "".join("# " + ln + "\n" for ln in marker.strip().split("\n")) + "\n")
+    open(prof, "w", encoding="utf-8", newline="\n").write(s)
+    print(f"  custom boss/area music turned off: its DLL is built for 1.17.0 code and {game_label} moved it")
+
 def main():
     if FLAGS & {"-h", "--help"}: print(__doc__); return
     if "--selftest" in FLAGS: selftest(); return
@@ -214,14 +242,18 @@ def main():
     van_new = os.path.join(game, "regulation.bin"); van_old = os.path.join(HERE, "tools", "vanilla-regulation-1.16.1-11611000.bin")
     modreg = os.path.join(conv, "mod", "regulation.bin")
     b, _, _ = R.read_regulation(modreg)
-    if b.version == "11701000": print("  regulation.bin already at 11701000 - skipping merge")
+    v, _, _ = R.read_regulation(van_new)
+    if v.version not in GAME_VERSIONS:
+        die(f"game regulation version is {v.version}; this patch supports Elden Ring "
+            + " and ".join(f"{lbl} ({ver})" for ver, lbl in GAME_VERSIONS.items()))
+    game_ver, game_label = v.version, GAME_VERSIONS[v.version]
+    print(f"Game patch:  {game_label} (regulation {game_ver})")
+    if b.version in ALREADY_PATCHED: print(f"  regulation.bin already at {b.version} - skipping merge")
     else:
         if b.version != "11611000": die(f"mod regulation version is {b.version}; this patch expects the 3.0.1.x file (11611000)")
-        v, _, _ = R.read_regulation(van_new)
-        if v.version != "11701000": die(f"game regulation version is {v.version}; the game must be on patch 1.17")
         backup(conv, os.path.join("mod", "regulation.bin"))
         R.cmd_upgrade(modreg, van_old, van_new, modreg + ".new", os.path.join(conv, "regulation-upgrade-report.json"))
-        os.replace(modreg + ".new", modreg); print("  regulation.bin rebuilt for 1.17")
+        os.replace(modreg + ".new", modreg); print(f"  regulation.bin rebuilt for {game_label}")
     # 2) pointer tables
     for rel in ("mod/action/script/modules/exposer/GameBasePointers.hks", "mod/action/script/modules/exposer/ChrInsPointers.hks"): backup(conv, rel)
     patch_hks(conv)
@@ -232,10 +264,11 @@ def main():
     shutil.copytree(os.path.join(pay, "me3"), os.path.join(conv, "me3"), dirs_exist_ok=True)
     for f in ("Start_Convergence.bat", "Start_Convergence.sh", "Diagnose_Convergence.bat", "README.md"): shutil.copy2(os.path.join(pay, f), os.path.join(conv, f))
     shutil.copy2(os.path.join(pay, "dll", "unlock_wwise_states_er.dll"), os.path.join(conv, "mod", "dll", "unlock_wwise_states_er.dll"))
+    if game_ver in WWISE_BROKEN_ON: disable_wwise(conv, game_label)
     for stale in ("version.txt",):  # stops the official launcher from reverting the files
         p = os.path.join(conv, stale)
         if os.path.exists(p): backup(conv, stale); os.remove(p); print(f"  removed {stale} (prevents the official Launcher from undoing this patch)")
-    print("\nDone. Run Start_Convergence.bat. The title screen must show App Ver. 1.17 / Regulation Ver. 1.17.")
+    print(f"\nDone. Run Start_Convergence.bat. The title screen must show App Ver. {game_label} / Regulation Ver. {game_label}.")
     print(f"Backups of replaced files: {os.path.join(conv, '_backup_pre_1.17')}")
     pause()
 

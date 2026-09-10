@@ -12,7 +12,8 @@ ex = os.path.join(conv, "mod", "action", "script", "modules", "exposer")
 for d in (ex, game, os.path.join(conv, "mod", "dll"), os.path.join(conv, "me3")): os.makedirs(d, exist_ok=True)
 van = os.path.join("tools", "vanilla-regulation-1.16.1-11611000.bin")
 shutil.copy(van, os.path.join(conv, "mod", "regulation.bin"))
-bnd, level, _ = R.read_regulation(van); bnd.version = "11701000"; R.write_regulation(os.path.join(game, "regulation.bin"), bnd, level)
+GAME_VER = os.environ.get("E2E_GAME_VERSION", "11701000")   # 11701000 = ER 1.17, 11711000 = ER 1.17.1
+bnd, level, _ = R.read_regulation(van); bnd.version = GAME_VER; R.write_regulation(os.path.join(game, "regulation.bin"), bnd, level)
 open(os.path.join(game, "eldenring.exe"), "wb").close()
 open(os.path.join(ex, "GameBasePointers.hks"), "w").write("-- synthetic\n" + "".join(f"local {n} = 0x{o:X} -- 1.16\n" for n, (o, _) in ap.RVAS.items()))
 open(os.path.join(ex, "ChrInsPointers.hks"), "w").write("    CHR_FLAGS = { -- 0x530 / 0x533\n" + "".join(

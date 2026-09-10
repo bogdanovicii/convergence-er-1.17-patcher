@@ -18,10 +18,22 @@ merge tool.
 ## You need
 
 * The Convergence 3.0.1 or 3.0.1.2 already installed (official download or the official Launcher).
-* Elden Ring on patch 1.17 (`Game\eldenring.exe` file version 2.7.0.0).
+* Elden Ring on patch 1.17 or 1.17.1 (`Game\eldenring.exe` 2.7.0.0 or 2.7.1.0).
 * Windows: nothing else if you use the exe. With the scripts instead: Python 3.9+ and `pip install zstandard cryptography`.
 * Steam Deck / Linux: Python 3, which SteamOS has. No pip, no packages: the helper uses the `zstd` and `openssl` tools
   that are already on the system.
+
+## Elden Ring 1.17.1
+
+1.17.1 (8 September 2026) is supported. It changed no parameter data whatsoever: the 1.17 and 1.17.1 vanilla
+regulations are identical row for row, and it moved no data address, so the rebuilt regulation and both pointer
+tables are correct on either patch. Patching on 1.17.1 produces the same mod content that was play-tested on 1.17.
+
+The one exception is the **custom boss/area music**. Its DLL resolves two music functions by hardcoded address and
+1.17.1 shifted that code, so on 1.17.1 the patcher comments that DLL out of the mod loader profile. Everything else
+runs. If you patched on 1.17 and then let the game update to 1.17.1, open `ConvergenceER/me3/convergence.me3` and
+comment out the four lines of the `unlock_wwise_states_er.dll` entry yourself, because at those addresses the DLL
+would hook unrelated code.
 
 ## Run
 
